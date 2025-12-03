@@ -1,3 +1,4 @@
+# step 2
 create or replace table `capstonew4.Capstone2025.county_landcover_h3` as
 
 with counties as (
@@ -20,8 +21,7 @@ land_cover_regions as (
   join ca_land_cover lc on ST_INTERSECTS(c.geom, lc.geometry)
 )
 
-select fips, subtype as land_cover_subtype, h3_lvl8
+select fips, subtype as land_cover_subtype, h3_lvl9
 from
   land_cover_regions,
-  unnest(bqcarto.h3.ST_ASH3_POLYFILL(geom, 8)) as h3_lvl8
-
+  unnest(bqcarto.h3.ST_ASH3_POLYFILL(geom, 9)) as h3_lvl9

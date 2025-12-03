@@ -1,3 +1,4 @@
+# step 1
 create or replace table `capstonew4.Capstone2025.county_neighbors` as
 
 with counties as (
