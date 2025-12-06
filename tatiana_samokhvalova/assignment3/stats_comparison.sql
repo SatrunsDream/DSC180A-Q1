@@ -1,14 +1,18 @@
 with county_lc_stats as (
-  select fips, land_cover_subtype, bldgtype, sum(cc) as counts
+  select fips, st_damcat, bldgtype, num_story, sqft, val_struct, land_cover_subtype, sum(cc) as counts
   from `capstonew4.Capstone2025.nsi_landcover`
-  group by fips, land_cover_subtype, bldgtype
+  group by fips, st_damcat, bldgtype, num_story, sqft, val_struct, land_cover_subtype
 ),
 neighbor_stats as (
   select
     county.fips as county,
     neighbor.fips as neighbor,
-    county.land_cover_subtype,
+    county.st_damcat,
     county.bldgtype,
+    county.num_story,
+    county.sqft,
+    county.val_struct,
+    county.land_cover_subtype,
     county.counts as county_stat,
     neighbor.counts as neighbor_stat
   from county_lc_stats county
@@ -20,12 +24,11 @@ neighbor_stats as (
 ),
 deltas as (
   select
-    county,
-    land_cover_subtype,
-    bldgtype,
-    abs(avg(county_stat - neighbor_stat)) as delta
+    county, st_damcat, bldgtype, num_story, sqft, val_struct, land_cover_subtype,
+    avg(county_stat - neighbor_stat) as delta,
+    avg(abs(county_stat - neighbor_stat)) as delta_abs
   from neighbor_stats
-  group by county, land_cover_subtype, bldgtype
+  group by county, st_damcat, bldgtype, num_story, sqft, val_struct, land_cover_subtype
 ),
 
 -- for viz
@@ -38,4 +41,6 @@ counties as (
 select d.*, c.geom
 from deltas d
 join counties c on d.county = c.fips
+-- example filter
+where st_damcat = 'IND' and bldgtype = 'H'
 order by delta desc
