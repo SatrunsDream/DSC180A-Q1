@@ -20,7 +20,8 @@ h3_lc_data AS (
 
   ON lc.h3_lc_id = structures.h3
 
-  GROUP BY lc.county_fips_code
+  GROUP BY lc.county_fips_code, 
+  structures.st_damcat, structures.bldgtype, structures.num_story, structures.sqft, structures.val_struct, structures.cc
 ),
 -- 
 
@@ -59,7 +60,7 @@ cnty_roi AS
 
 neighboring_counties AS (
 
- SELECT c1.county_fips_code AS county_code, c2.county_fips_code AS neighbors_code
+ SELECT c1.geometry AS geometry, c1.county_fips_code AS county_code, c2.county_fips_code AS neighbors_code
 
  FROM cnty_roi AS c1
 
@@ -67,21 +68,35 @@ neighboring_counties AS (
 
  ON ST_INTERSECTS(c1.geometry, c2.geometry) AND (c1.county_fips_code != c2.county_fips_code)
 
-)
+),
 
-SELECT county_code, neighbors_code, ABS(lc1.counts - lc2.counts) AS deltas
+# get absolute difference 
+# change which rows and structs are commented in order to instead sort by relative counts
 
-#SELECT COUNT(*) AS C
+delta AS (SELECT county_code, AVG(ABS(lc1.counts - lc2.counts)) AS deltas
 
 FROM neighboring_counties AS nc
 
 JOIN h3_lc_data AS lc1
+# JOIN relative_freq AS lc1
 
 ON lc1.county_fips_code = county_code
 
 JOIN h3_lc_data AS lc2
+# JOIN relative_freq AS lc2
 
 ON lc2.county_fips_code = neighbors_code
 
+GROUP BY county_code
+
 ORDER BY deltas DESC
+)
+
+SELECT cnty_roi.geometry AS geometry, delta.deltas AS deltas
+
+FROM delta
+
+JOIN cnty_roi
+
+ON cnty_roi.county_fips_code = delta.county_code
 
