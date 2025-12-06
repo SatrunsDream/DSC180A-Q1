@@ -1,0 +1,161 @@
+Hi all,
+
+My apologies for not getting this out Friday, and I hope you all enjoyed your Halloween weekend.  I expect this will be another 2 week assignment, but hope to see good progress at our next class.  Pretend we’re project managers and you’re the devs; it’s your job to harass us if requirements are unclear.  Or if you want to brainstorm a potential solution before writing it, pretend you’re in a collaborative work setting and present your thoughts and get feedback.  That is, if you start spinning your wheels, reach out – we work together to meet our deadlines!
+
+See the ‘Stages’ in comments below – and I left my implementation of the first one in there for you.
+
+Pete
+
+#
+# Capstone Data Quality BQ Assignment 2
+#
+# This assignment is to build a map, similar to a 'topo-map', starting with a polygon around
+# the most dense areas followed by 3 levels of 'distance to most dense', at distances of .4,
+# 1, and 2.5 km.  (This polygon layer can then be used to classify every structure with a
+# value 1-5, with 1 being most dense and 5 being farthest away from high density areas.)
+#
+# Why?  This type of information is useful in a couple ways.  First, areas of density
+# may have lower or higher hazard for different perils.  Second, areas of density may
+# be useful to define groupings of property characteristics for comparison with other
+# regions of similar density, because regions of different density (urban vs. rural) may
+# have differing statistics, such as frequency of particular building materials used.
+#
+# Read about: H3 cell indexing: https://www.uber.com/blog/h3/
+#             Clustering, DBScan and k-means (both in wikipedia, we won't use k-means but
+#                         you should understand it)
+# As always: https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions
+# Will also use:
+# BQCARTO H3 functions, e.g. (case sensitive):
+-- bqcarto.h3.ST_ASH3(location, 10) as h3 # 2nd param H3 level
+-- bqcarto.h3.LONGLAT_ASH3(-3.7038, 40.4168, 6) as h3  # Last param H3 level
+-- bqcarto.h3.ST_BOUNDARY(h3) # Get polygon hexagon for H3 cell
+-- bqcarto.h3.ST_ASH3_POLYFILL(geom, 6)  # Get H3 cells to fill polygon
+-- bqcarto.h3.TOCHILDREN(h3, 8)  # Get children of H3 cell at specified level
+# Concepts include: clusterdbscan density clustering, simplification (smooth resulting polygons),
+# sieve filter (remove small polygons), hierarchical hex cells for aggregation, spatial index,
+# and map visualization.
+#
+# When a related project was run at Cotality, clusterdbscan could not run a nationwide
+# structure set due to resource limitations.  However, this task does not require every
+# structure to work; clusterdbscan uses a parameter to define density, so reducing that
+# count at the same rate that the full dataset is reduced by taking a random subset should
+# result in similar clustering.  Tasks may also be broken down into chunks, like states.
+#
+ 
+# drop table `clgx-rqe-sbx-0325.Capstone2025.CAStructuresInput`;
+create table `clgx-rqe-sbx-0325.Capstone2025.CAStructuresInput` cluster by centroid as
+(
+  with states as
+  (
+    select *, st_simplify(state_geom, 1000) as simple_geom
+    from `bigquery-public-data.geo_us_boundaries.states` where state = 'CA'
+  ),
+  structures as
+  (
+    select bb.id, bb.level, bb.has_parts, bb.geometry, st_centroid(bb.geometry) as centroid #, rand() as rnd
+    from `bigquery-public-data.overture_maps.building` bb
+    join states ss
+    on st_intersects(ss.simple_geom, st_geogpoint((bbox.xmin + bbox.xmax) / 2, (bbox.ymin + bbox.ymax) / 2))
+    where is_underground = false and class = 'house'
+  )
+  select * from structures # except(rnd) from structures where rnd < .02
+);
+ 
+#
+# Using all CA 'house' structures, already a subset of full table, quickly create smaller test subset
+# For example, just select San Diego county fips in cnty_roi.  Or, use '06%' for all counties, but
+# set percentage to .05 to get smaller sampling.
+#
+# drop table `clgx-rqe-sbx-0325.Capstone2025.TestStructures`;
+create table `clgx-rqe-sbx-0325.Capstone2025.TestStructures` as
+(
+  with structures as
+  (
+    select * from `clgx-rqe-sbx-0325.Capstone2025.CAStructuresInput`
+  ),
+  cnty_roi as
+  (
+    select county_fips_code as fips, county_geom as geometry
+    from `bigquery-public-data.geo_us_boundaries.counties`
+    where county_fips_code = '06073'
+  ),
+  subset as
+  (
+    select cnty.fips, ss.* from structures ss
+    join cnty_roi cnty
+    on st_intersects(cnty.geometry, ss.centroid)
+  )
+  select * except(rnd, centroid, buff_geom), st_closestpoint(buff_geom, centroid) as location from
+  (
+     # Can use row_number() or rand(), plus some filter, to reduce subset to desired size.
+    select ss.*, st_buffer(ss.geometry, -2, 3) as buff_geom, row_number() over () as rnd # rand() as rnd,
+    from subset ss
+  )
+  where not st_isempty(buff_geom) and mod(rnd, 2) = 0 # rnd < .5 # (When using 'rand()')
+);
+ 
+# Visualize your subset in GeoViz (color using 'categorical' style assigning different color to cls 1, cls 2)
+select 1 as cls, geometry
+from `clgx-rqe-sbx-0325.Capstone2025.TestStructures`
+union all
+(
+  select 2 as cls, location
+  from `clgx-rqe-sbx-0325.Capstone2025.TestStructures`
+)
+ 
+#
+# Assignment Stages:
+# 1: Preprocess - create an input structure test set that includes an 'H3' ID for the cell regions
+#    you will use to build a polygon around high density.  We use H3 hex cells to make nice maps,
+#    but other cells such as geohashes or S2 cells would also work.  Modify the above 'TestStructures'
+#    query to include your region ID (H3 ID) for each location at level 8 and 9.
+# 2: Use st_clusterdbscan and structure locations to classify locations within dense clusters.
+# 3: For each cluster, obtain the H3 IDs that include a point classified as high density.
+#    Discard any cluster with fewer than 10 cells.  Also obtain cell boundary and count of structures
+#    in each cell.  Hint: When getting H3 IDs for cluster, use ‘group by’ on cluster ID and H3 ID.
+#    Then ‘count(*)’ will give you number of structures, and you will have cell boundary only once per cell.
+#    Be sure to ignore structures in ‘null’ cluster!
+# 4: Vectorize H3 cells using st_union_agg.  Try to smooth with 'closing'/'opening' operations (using
+#    st_buffer) and st_simplify.
+# 5: Obtain distance to high density polygons at .4, 1, and 2.5 km.  Hint: Keep a ‘level’ attribute
+#    for these, where original is level 1, and these next three are 2, 3, & 4.
+# 6: Merge overlapping polygons at the same level.  Hint: this requires st_union_agg for all geometries
+#    at the same level, followed by st_dump to separate each polygon again.  Update property counts!
+# 7: Visualize your results by showing maps: h3 cell boundaries,
+#    polygon map with .15 opacity, showing darker to lighter from dense to farthest from dense.
+#
+ 
+
+# stage 1
+# drop table `clgx-rqe-sbx-0325.Capstone2025.TestStructuresWithH3`;
+create table `clgx-rqe-sbx-0325.Capstone2025.TestStructuresWithH3` as
+(
+  with structures as
+  (
+    select * from `clgx-rqe-sbx-0325.Capstone2025.CAStructuresInput`
+  ),
+  cnty_roi as
+  (
+    select county_fips_code as fips, county_geom as geometry
+    from `bigquery-public-data.geo_us_boundaries.counties`
+    where county_fips_code = '06073'
+  ),
+  subset as
+  (
+    select cnty.fips, ss.* from structures ss
+    join cnty_roi cnty
+    on st_intersects(cnty.geometry, ss.centroid)
+  )
+  select * except(rnd, centroid, buff_geom), st_closestpoint(buff_geom, centroid) as location,
+  bqcarto.h3.ST_ASH3(centroid, 8) as h3_lvl8, bqcarto.h3.ST_ASH3(centroid, 9) as h3_lvl9, from
+  (
+     # Can use row_number() or rand(), plus some filter, to reduce subset to desired size.
+    select ss.*, st_buffer(ss.geometry, -2, 3) as buff_geom, row_number() over () as rnd # rand() as rnd,
+    from subset ss
+  )
+  where not st_isempty(buff_geom) and mod(rnd, 2) = 0 # rnd < .5 # (When using 'rand()')
+)
+ 
+
+Examples: cells that belong to clusters, polygonised/smoothed H3 boundaries, and final results.
+
