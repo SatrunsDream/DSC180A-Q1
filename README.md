@@ -5,6 +5,7 @@ DSC 180A section B13 (Cotality) domain 3
 
 Tatiana Samokhvalova, Angela Shen, Sardor Sobirov, Nathaphat Taleongpong
 
+```
 .
 ├── README.md
 ├── Sardor_Sobirov
@@ -59,3 +60,4 @@ Tatiana Samokhvalova, Angela Shen, Sardor Sobirov, Nathaphat Taleongpong
     │   └── stats_comparison.sql
     └── readings
         └── pollack_questions.md
+```
